@@ -13,3 +13,4 @@ PyRSS2Gen
 python-swiftclient>=2.2.0
 requests!=2.8.0,>=2.5.2
 six>=1.9.0
+pygerrit2>=2.0.1

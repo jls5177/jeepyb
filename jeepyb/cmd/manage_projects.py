@@ -50,45 +50,28 @@
 #   acl-parameters:
 #     project: OTHER_PROJECT_NAME
 
-import argparse
 import ConfigParser
+import argparse
 import glob
 import hashlib
-import json
 import logging
 import os
 import re
 import shutil
-import time
 
-import gerritlib.gerrit
 import github
+import yaml
 
-import jeepyb.gerritdb
+from jeepyb.gerrit import GerritAPI, GerritCheckout
+from jeepyb.jeepyb_settings import JeepybSettings, JeepybProjectConfig
 import jeepyb.log as l
 import jeepyb.utils as u
-
-registry = u.ProjectsRegistry()
 
 log = logging.getLogger("manage_projects")
 orgs = None
 
-# Gerrit system groups as defined:
-# https://review.openstack.org/Documentation/access-control.html#system_groups
-# Need to set Gerrit system group's uuid to the format it expects.
-GERRIT_SYSTEM_GROUPS = {
-    'Anonymous Users': 'global:Anonymous-Users',
-    'Project Owners': 'global:Project-Owners',
-    'Registered Users': 'global:Registered-Users',
-    'Change Owner': 'global:Change-Owner',
-}
 
-
-class FetchConfigException(Exception):
-    pass
-
-
-class CopyACLException(Exception):
+class CopyFileException(Exception):
     pass
 
 
@@ -96,126 +79,37 @@ class CreateGroupException(Exception):
     pass
 
 
-def fetch_config(project, remote_url, repo_path, env=None):
-    env = env or {}
-    # Poll for refs/meta/config as gerrit may not have written it out for
-    # us yet.
-    for x in range(10):
-        status = u.git_command(
-            repo_path,
-            "fetch %s +refs/meta/config:refs/remotes/gerrit-meta/config"
-            % remote_url, env)
-        if status == 0:
-            break
-        else:
-            log.debug("Failed to fetch refs/meta/config for project: %s" %
-                      project)
-            time.sleep(2)
-    if status != 0:
-        log.error("Failed to fetch refs/meta/config for project: %s" % project)
-        raise FetchConfigException()
+def copy_file_to_git_repo(repo_path, copy_file, dest_filename):
+    """
+    Copy given file to destination path
+    :param repo_path: Path to git repo
+    :param copy_file: File to copy
+    :param dest_filename: Destination (relative to repo_path) to copy file to
+    :return: True if the repo is dirty (file was updated in the copy), False if clean
+    """
+    if not os.path.exists(copy_file):
+        raise CopyFileException()
 
-    # Poll for project.config as gerrit may not have committed an empty
-    # one yet.
-    output = ""
-    for x in range(10):
-        status = u.git_command(repo_path, "remote update --prune", env)
-        if status != 0:
-            log.error("Failed to update remote: %s" % remote_url)
-            time.sleep(2)
-            continue
-        else:
-            status, output = u.git_command_output(
-                repo_path, "ls-files --with-tree=remotes/gerrit-meta/config "
-                "project.config", env)
-        if output.strip() != "project.config" or status != 0:
-            log.debug("Failed to find project.config for project: %s" %
-                      project)
-            time.sleep(2)
-        else:
-            break
-    if output.strip() != "project.config" or status != 0:
-        log.error("Failed to find project.config for project: %s" % project)
-        raise FetchConfigException()
+    dest_path = os.path.join(repo_path, dest_filename)
+    shutil.copy(copy_file, dest_path)
 
-    # Because the following fails if executed more than once you should only
-    # run fetch_config once in each repo.
-    status = u.git_command(
-        repo_path, "checkout -B config remotes/gerrit-meta/config")
-    if status != 0:
-        log.error("Failed to checkout config for project: %s" % project)
-        raise FetchConfigException()
+    u.git_command(repo_path, ['add', dest_filename])
 
-
-def copy_acl_config(project, repo_path, acl_config):
-    if not os.path.exists(acl_config):
-        raise CopyACLException()
-
-    acl_dest = os.path.join(repo_path, "project.config")
-    status, _ = u.run_command(
-        "cp %s %s" % (acl_config, acl_dest), status=True)
-    if status != 0:
-        raise CopyACLException()
-
-    status = u.git_command(repo_path, "diff --quiet")
+    status = u.git_command(repo_path, ['diff-index', '--quiet', 'HEAD', '--'])
     return status != 0
 
 
-def push_acl_config(project, remote_url, repo_path, gitid, env=None):
-    env = env or {}
-    cmd = "commit -a -m'Update project config.' --author='%s'" % gitid
-    status = u.git_command(repo_path, cmd)
-    if status != 0:
-        log.error("Failed to commit config for project: %s" % project)
-        return False
-    status, out = u.git_command_output(
-        repo_path, "push %s HEAD:refs/meta/config" % remote_url, env)
-    if status != 0:
-        log.error("Failed to push config for project: %s" % project)
-        return False
-    return True
-
-
-def _get_group_uuid(group, retries=10):
+def create_groups_file(project, gerrit_api, repo_path):
     """
-    Gerrit keeps internal user groups in the DB while it keeps systems
-    groups in All-Projects groups file (in refs/meta/config).  This
-    will only get the UUIDs for internal user groups.
-
-    Note: 'Administrators', 'Non-Interactive Users' and all other custom
-    groups in Gerrit are defined as internal user groups.
-
-    Wait for up to 10 seconds for the group to be created in the DB.
+    
+    :param project: 
+    :param gerrit_api: 
+    :param repo_path: 
+    :type project: str 
+    :type gerrit_api: GerritAPI
+    :type repo_path: str
+    :return: 
     """
-    query = "SELECT group_uuid FROM account_groups WHERE name = %s"
-    con = jeepyb.gerritdb.connect()
-    for x in range(retries):
-        cursor = con.cursor()
-        cursor.execute(query, (group,))
-        data = cursor.fetchone()
-        cursor.close()
-        con.commit()
-        if data:
-            return data[0]
-        if retries > 1:
-            time.sleep(1)
-    return None
-
-
-def get_group_uuid(gerrit, group):
-    uuid = _get_group_uuid(group, retries=1)
-    if uuid:
-        return uuid
-    if group in GERRIT_SYSTEM_GROUPS:
-        return GERRIT_SYSTEM_GROUPS[group]
-    gerrit.createGroup(group)
-    uuid = _get_group_uuid(group)
-    if uuid:
-        return uuid
-    return None
-
-
-def create_groups_file(project, gerrit, repo_path):
     acl_config = os.path.join(repo_path, "project.config")
     group_file = os.path.join(repo_path, "groups")
     uuids = {}
@@ -225,7 +119,7 @@ def create_groups_file(project, gerrit, repo_path):
             group = r.group(1)
             if group in uuids.keys():
                 continue
-            uuid = get_group_uuid(gerrit, group)
+            uuid = gerrit_api.group_uuid(group)
             if uuid:
                 uuids[group] = uuid
             else:
@@ -235,37 +129,42 @@ def create_groups_file(project, gerrit, repo_path):
         with open(group_file, 'w') as fp:
             for group, uuid in uuids.items():
                 fp.write("%s\t%s\n" % (uuid, group))
-        status = u.git_command(repo_path, "add groups")
+        status = u.git_command(repo_path, ['add', 'groups'])
         if status != 0:
             log.error("Failed to add groups file for project: %s" % project)
             raise CreateGroupException()
 
 
-def create_update_github_project(
-        default_has_issues, default_has_downloads, default_has_wiki,
-        github_secure_config, options, project, description, homepage,
-        cache):
+def create_update_github_project(section, settings):
+    """
+    Create/Update the project on Github
+    :param section: 
+    :param settings: 
+    :type section: JeepybProjectConfig
+    :type settings: JeepybSettings
+    :return: True if project was created on Github
+    """
     created = False
-    has_issues = 'has-issues' in options or default_has_issues
-    has_downloads = 'has-downloads' in options or default_has_downloads
-    has_wiki = 'has-wiki' in options or default_has_wiki
+    has_issues = 'has-issues' in section.options or settings.default_has_issues
+    has_downloads = 'has-downloads' in section.options or settings.default_has_downloads
+    has_wiki = 'has-wiki' in section.options or settings.default_has_wiki
 
     needs_update = False
-    if not cache.get('created-in-github', False):
+    if not section.cache.get('created-in-github', False):
         needs_update = True
-    if not cache.get('gerrit-in-team', False):
+    if not section.cache.get('gerrit-in-team', False):
         needs_update = True
-    if cache.get('has_issues', default_has_issues) != has_issues:
+    if section.cache.get('has_issues', settings.default_has_issues) != has_issues:
         needs_update = True
-    if cache.get('has_downloads', default_has_downloads) != has_downloads:
+    if section.cache.get('has_downloads', settings.default_has_downloads) != has_downloads:
         needs_update = True
-    if cache.get('has_wiki', default_has_wiki) != has_wiki:
+    if section.cache.get('has_wiki', settings.default_has_wiki) != has_wiki:
         needs_update = True
     if not needs_update:
         return False
 
     secure_config = ConfigParser.ConfigParser()
-    secure_config.read(github_secure_config)
+    secure_config.read(settings.github_secure_config)
 
     global orgs
     if orgs is None:
@@ -280,12 +179,12 @@ def create_update_github_project(
     orgs_dict = dict(zip([o.login.lower() for o in orgs], orgs))
 
     # Find the project's repo
-    project_split = project.split('/', 1)
+    project_split = section.project_name.split('/', 1)
     org_name = project_split[0]
     if len(project_split) > 1:
         repo_name = project_split[1]
     else:
-        repo_name = project
+        repo_name = section.project_name
 
     try:
         org = orgs_dict[org_name.lower()]
@@ -300,23 +199,23 @@ def create_update_github_project(
     except github.GithubException:
         log.info("Creating %s in github", repo_name)
         repo = org.create_repo(repo_name,
-                               homepage=homepage,
+                               homepage=section.homepage,
                                has_issues=has_issues,
                                has_downloads=has_downloads,
                                has_wiki=has_wiki)
         created = True
 
-    cache['created-in-github'] = True
-    cache['has_wiki'] = has_wiki
-    cache['has_downloads'] = has_downloads
-    cache['has_issues'] = has_issues
+    section.cache['created-in-github'] = True
+    section.cache['has_wiki'] = has_wiki
+    section.cache['has_downloads'] = has_downloads
+    section.cache['has_issues'] = has_issues
 
     kwargs = {}
     # If necessary, update project on Github
-    if description and description != repo.description:
-        kwargs['description'] = description
-    if homepage and homepage != repo.homepage:
-        kwargs['homepage'] = homepage
+    if section.description and section.description != repo.description:
+        kwargs['description'] = section.description
+    if section.homepage and section.homepage != repo.homepage:
+        kwargs['homepage'] = section.homepage
     if has_issues != repo.has_issues:
         kwargs['has_issues'] = has_issues
     if has_downloads != repo.has_downloads:
@@ -327,15 +226,15 @@ def create_update_github_project(
     if kwargs:
         log.info("Updating github repo info about %s", repo_name)
         repo.edit(repo_name, **kwargs)
-    cache.update(kwargs)
+    section.cache.update(kwargs)
 
-    if not cache.get('gerrit-in-team', False):
+    if not section.cache.get('gerrit-in-team', False):
         if 'gerrit' not in [team.name for team in repo.get_teams()]:
             log.info("Adding gerrit to github team for %s", repo_name)
             teams = org.get_teams()
             teams_dict = dict(zip([t.name.lower() for t in teams], teams))
             teams_dict['gerrit'].add_to_repos(repo)
-        cache['gerrit-in-team'] = True
+        section.cache['gerrit-in-team'] = True
         created = True
 
     return created
@@ -347,107 +246,108 @@ def find_description_override(repo_path):
     return None
 
 
-def fsck_repo(repo_path):
-    rc, out = u.git_command_output(repo_path, 'fsck --full')
-    # Check for non zero return code or warnings which should
-    # be treated as errors. In this case zeroPaddedFilemodes
-    # will not be accepted by Gerrit/jgit but are accepted by C git.
-    if rc != 0 or 'zeroPaddedFilemode' in out:
-        log.error('git fsck of %s failed:\n%s' % (repo_path, out))
-        raise Exception('git fsck failed not importing')
-
-
-def push_to_gerrit(repo_path, project, push_string, remote_url, ssh_env):
-    try:
-        u.git_command(repo_path, push_string % remote_url, env=ssh_env)
-        u.git_command(repo_path, "push --tags %s" % remote_url, env=ssh_env)
-    except Exception:
-        log.exception(
-            "Error pushing %s to Gerrit." % project)
-
-
-def sync_upstream(repo_path, project, ssh_env, upstream_prefix):
-    u.git_command(
-        repo_path,
-        "remote update upstream --prune", env=ssh_env)
-    # Any branch that exists in the upstream remote, we want
-    # a local branch of, optionally prefixed with the
-    # upstream prefix value
-    for branch in u.git_command_output(
-            repo_path, "branch -a")[1].split('\n'):
-        if not branch.strip().startswith("remotes/upstream"):
-            continue
-        if "->" in branch:
-            continue
-        local_branch = branch.split()[0][len('remotes/upstream/'):]
-        if upstream_prefix:
-            local_branch = "%s/%s" % (
-                upstream_prefix, local_branch)
-
-        # Check out an up to date copy of the branch, so that
-        # we can push it and it will get picked up below
-        u.git_command(repo_path, "checkout -B %s %s" % (
-            local_branch, branch))
-
-    try:
-        # Push all of the local branches to similarly named
-        # Branches on gerrit. Also, push all of the tags
-        u.git_command(
-            repo_path,
-            "push origin refs/heads/*:refs/heads/*",
-            env=ssh_env)
-        u.git_command(repo_path, 'push origin --tags', env=ssh_env)
-    except Exception:
-        log.exception(
-            "Error pushing %s to Gerrit." % project)
-
-
-def process_acls(acl_config, project, ACL_DIR, section,
-                 remote_url, repo_path, ssh_env, gerrit, GERRIT_GITID):
-    if not os.path.isfile(acl_config):
+def process_acls(acl_path, section, gerrit_api):
+    """
+    Push Project ACLs to Gerrit
+    :param acl_path: 
+    :param section: 
+    :param gerrit_api: 
+    :type acl_path: str
+    :type section: JeepybProjectConfig
+    :type gerrit_api: GerritAPI
+    :return: 
+    """
+    if not os.path.isfile(acl_path):
+        log.warning('ACL Config was not found, %s' % acl_path)
         return
-    try:
-        fetch_config(project, remote_url, repo_path, ssh_env)
-        if not copy_acl_config(project, repo_path, acl_config):
-            # nothing was copied, so we're done
+
+    # Use context manager to checkout and push any changes
+    with gerrit_api.meta_updater(project=section.project_name, checkout_path=section.repo_path):
+        dirty_repo = copy_file_to_git_repo(repo_path=section.repo_path,
+                                           copy_file=acl_path,
+                                           dest_filename='project.config')
+        if not dirty_repo:
+            # nothing was modified, so we're done
             return
-        create_groups_file(project, gerrit, repo_path)
-        push_acl_config(project, remote_url, repo_path,
-                        GERRIT_GITID, ssh_env)
+
+        # Only create groups file if the ACL file was changed
+        create_groups_file(project=section.project_name,
+                           gerrit_api=gerrit_api,
+                           repo_path=section.repo_path)
+
+
+def create_groups(group_config, gerrit_api):
+    if not os.path.isfile(group_config):
+        return
+    with open(group_config, 'r') as f:
+        yaml_groups = yaml.safe_load(f)
+
+    for group in yaml_groups:
+        ldap_groups = group.get('ldap-groups', [])
+        if len(ldap_groups):
+            ldap_groups = ['ldap:' + g for g in ldap_groups]
+
+        gerrit_api.create_group(name=group['name'],
+                                description=group.get('description'),
+                                members=group.get('members', []),
+                                subgroups=group.get('subgroups', []),
+                                ldap_groups=ldap_groups)
+
+
+def process_prolog_rules(prolog_path, section, gerrit_api):
+    """
+    Push Project Prolog Rules to Gerrit
+    :param prolog_path: 
+    :param section: 
+    :param gerrit_api: 
+    :type prolog_path: str
+    :type section: JeepybProjectConfig
+    :type gerrit_api: GerritAPI
+    :return: 
+    """
+    if not os.path.isfile(prolog_path):
+        log.warning('Prolog rules file was not found, %s' % prolog_path)
+        return
+
+    # Use context manager to checkout and push any changes
+    with gerrit_api.meta_updater(project=section.project_name, checkout_path=section.repo_path):
+        copy_file_to_git_repo(repo_path=section.repo_path, copy_file=prolog_path, dest_filename='rules.pl')
+
+
+def create_gerrit_project(section, gerrit_api):
+    """
+    Creates a project in Gerrit
+    :param section: JeepybProjectConfig
+    :param gerrit_api: GerritAPI
+    :return: True if project was created, False otherwise
+    """
+    if section.project_name in gerrit_api.projects:
+        log.info('Project (%s) already exists in Gerrit' % section.project_name)
+        section.cache['project-created'] = True
+        return False
+    try:
+        gerrit_api.create_project(name=section.project_name,
+                                  description=section.description,
+                                  is_parent=section.is_parent,
+                                  parent_project=section.parent_project)
+        section.cache['project-created'] = True
+        return True
     except Exception:
         log.exception(
-            "Exception processing ACLS for %s." % project)
-    finally:
-        u.git_command(repo_path, 'reset --hard')
-        u.git_command(repo_path, 'checkout master')
-        u.git_command(repo_path, 'branch -D config')
+            "Exception creating %s in Gerrit." % section.project_name)
+        section.cache['project-created'] = False
+        raise
 
 
-def create_gerrit_project(project, project_list, gerrit):
-    if project not in project_list:
-        try:
-            gerrit.createProject(project)
-            return True
-        except Exception:
-            log.exception(
-                "Exception creating %s in Gerrit." % project)
-            raise
-    return False
+def generate_sha_for_dir(path, extension='.config'):
+    sha_cache = {}
+    for config_file in glob.glob(os.path.join(path, '*/*%s' % extension)):
+        sha256 = hashlib.sha256()
+        with open(config_file, 'r') as f:
+            sha256.update(f.read())
+        sha_cache[config_file] = sha256.hexdigest()
 
-
-def create_local_mirror(local_git_dir, project_git,
-                        gerrit_system_user, gerrit_system_group):
-
-    git_mirror_path = os.path.join(local_git_dir, project_git)
-    if not os.path.exists(git_mirror_path):
-        (ret, output) = u.run_command_status(
-            "git --bare init %s" % git_mirror_path)
-        if ret:
-            u.run_command("rm -rf git_mirror_path")
-            raise Exception(output)
-        u.run_command(
-            "chown -R %s:%s %s" % (
-                gerrit_system_user, gerrit_system_group, git_mirror_path))
+    return sha_cache
 
 
 def main():
@@ -455,168 +355,121 @@ def main():
     l.setup_logging_arguments(parser)
     parser.add_argument('--nocleanup', action='store_true',
                         help='do not remove temp directories')
+    parser.add_argument('--project-config-dir', action='store',
+                        default=None,
+                        help='Location of the project-config repo')
     parser.add_argument('projects', metavar='project', nargs='*',
                         help='name of project(s) to process')
     args = parser.parse_args()
     l.configure_logging(args)
 
-    default_has_github = registry.get_defaults('has-github', True)
+    # Generate Jeepyb Settings
+    settings = JeepybSettings(args.project_config_dir)
 
-    LOCAL_GIT_DIR = registry.get_defaults('local-git-dir', '/var/lib/git')
-    JEEPYB_CACHE_DIR = registry.get_defaults('jeepyb-cache-dir',
-                                             '/var/lib/jeepyb')
-    ACL_DIR = registry.get_defaults('acl-dir')
-    GERRIT_HOST = registry.get_defaults('gerrit-host')
-    GITREVIEW_GERRIT_HOST = registry.get_defaults(
-        'gitreview-gerrit-host', GERRIT_HOST)
-    GERRIT_PORT = int(registry.get_defaults('gerrit-port', '29418'))
-    GITREVIEW_GERRIT_PORT = int(registry.get_defaults(
-        'gitreview-gerrit-port', GERRIT_PORT))
-    GERRIT_USER = registry.get_defaults('gerrit-user')
-    GERRIT_KEY = registry.get_defaults('gerrit-key')
-    GERRIT_GITID = registry.get_defaults('gerrit-committer')
-    GERRIT_REPLICATE = registry.get_defaults('gerrit-replicate', True)
-    GERRIT_OS_SYSTEM_USER = registry.get_defaults('gerrit-system-user',
-                                                  'gerrit2')
-    GERRIT_OS_SYSTEM_GROUP = registry.get_defaults('gerrit-system-group',
-                                                   'gerrit2')
-    DEFAULT_HOMEPAGE = registry.get_defaults('homepage')
-    DEFAULT_HAS_ISSUES = registry.get_defaults('has-issues', False)
-    DEFAULT_HAS_DOWNLOADS = registry.get_defaults('has-downloads', False)
-    DEFAULT_HAS_WIKI = registry.get_defaults('has-wiki', False)
-    GITHUB_SECURE_CONFIG = registry.get_defaults(
-        'github-config',
-        '/etc/github/github-projects.secure.config')
-    PROJECT_CACHE_FILE = os.path.join(JEEPYB_CACHE_DIR, 'project.cache')
-    project_cache = {}
-    if os.path.exists(PROJECT_CACHE_FILE):
-        project_cache = json.loads(open(PROJECT_CACHE_FILE, 'r').read())
-    acl_cache = {}
-    for acl_file in glob.glob(os.path.join(ACL_DIR, '*/*.config')):
-        sha256 = hashlib.sha256()
-        sha256.update(open(acl_file, 'r').read())
-        acl_cache[acl_file] = sha256.hexdigest()
+    # Generate hashes of current configurations
+    acl_cache = generate_sha_for_dir(settings.acl_dir, extension='.config')
+    group_cache = generate_sha_for_dir(settings.group_dir, extension='.yaml')
+    prolog_cache = generate_sha_for_dir(settings.prolog_dir, extension='.pl')
 
-    gerrit = gerritlib.gerrit.Gerrit(GERRIT_HOST,
-                                     GERRIT_USER,
-                                     GERRIT_PORT,
-                                     GERRIT_KEY)
-    project_list = gerrit.listProjects()
-    ssh_env = u.make_ssh_wrapper(GERRIT_USER, GERRIT_KEY)
-    try:
-        for section in registry.configs_list:
-            project = section['project']
-            if args.projects and project not in args.projects:
-                continue
+    gerrit_api = GerritAPI(host=settings.gerrit_host,
+                           user=settings.gerrit_user,
+                           port=settings.gerrit_port,
+                           ssh_key=settings.gerrit_key,
+                           url=settings.gerrit_url,
+                           http_pass=settings.gerrit_http_pass,
+                           gitid=settings.gerrit_gitid,
+                           system_user=settings.gerrit_os_system_user,
+                           system_group=settings.gerrit_os_system_group)
 
-            try:
-                log.info("Processing project: %s" % project)
-
-                # Figure out all of the options
-                options = section.get('options', dict())
-                description = section.get('description', None)
-                homepage = section.get('homepage', DEFAULT_HOMEPAGE)
-                upstream = section.get('upstream', None)
-                repo_path = os.path.join(JEEPYB_CACHE_DIR, project)
-
+    with settings as configs_list:
+        for config_section in configs_list:
+            with config_section as section:
+                # Skip the project is not defined in CLI argument
+                if args.projects and section.project_name not in args.projects:
+                    continue
                 # If this project doesn't want to use gerrit, exit cleanly.
-                if 'no-gerrit' in options:
+                if section.no_gerrit:
                     continue
 
-                project_git = "%s.git" % project
-                remote_url = "ssh://%s:%s/%s" % (
-                    GERRIT_HOST,
-                    GERRIT_PORT,
-                    project)
-                git_opts = dict(upstream=upstream,
-                                repo_path=repo_path,
-                                remote_url=remote_url)
-                acl_config = section.get(
-                    'acl-config',
-                    '%s.config' % os.path.join(ACL_DIR, project))
-                project_cache.setdefault(project, {})
-
-                # Create the project in Gerrit first, since it will fail
-                # spectacularly if its project directory or local replica
-                # already exist on disk
-                project_created = project_cache[project].get(
-                    'project-created', False)
-                if not project_created:
+                # Create the project if not already created
+                if not section.already_created:
                     try:
-                        project_created = create_gerrit_project(
-                            project, project_list, gerrit)
-                        project_cache[project]['project-created'] = True
+                        create_gerrit_project(section, gerrit_api)
+                        section.cache['project-created'] = True
                     except Exception:
-                        project_cache[project]['project-created'] = False
+                        section.cache['project-created'] = False
                         continue
 
-                pushed_to_gerrit = project_cache[project].get(
-                    'pushed-to-gerrit', False)
-                if not pushed_to_gerrit:
+                # Create a Checkout object to process repos locally
+                checkout = GerritCheckout(project=section.project_name,
+                                          checkout_path=section.repo_path,
+                                          upstream=section.upstream,
+                                          gerrit_api=gerrit_api)
+
+                # Push to Gerrit if we have not already
+                if not section.cache_pushed_to_gerrit:
                     # We haven't pushed to gerrit, so grab the repo again
-                    if os.path.exists(repo_path):
-                        shutil.rmtree(repo_path)
+                    u.remove_dir_if_exists(section.repo_path)
 
                     # Make Local repo
-                    push_string = u.make_local_copy(
-                        repo_path, project, project_list,
-                        git_opts, ssh_env, upstream, GITREVIEW_GERRIT_HOST,
-                        GITREVIEW_GERRIT_PORT, project_git, GERRIT_GITID)
+                    push_string = checkout.make_local_copy()
 
-                    description = (
-                        find_description_override(repo_path)
-                        or description)
+                    section.description = find_description_override(section.repo_path) or section.description
 
-                    fsck_repo(repo_path)
+                    # Check repo health
+                    checkout.fsck_repo()
 
+                    # Push to Gerrit if local repo was created
                     if push_string:
-                        push_to_gerrit(
-                            repo_path, project, push_string,
-                            remote_url, ssh_env)
-                    project_cache[project]['pushed-to-gerrit'] = True
-                    if GERRIT_REPLICATE:
-                        gerrit.replicate(project)
+                        checkout.push_to_gerrit(push_string)
+                    section.cache['pushed-to-gerrit'] = True
+
+                    # Replicate to other Git Repos (if enabled)
+                    if settings.gerrit_replicate:
+                        gerrit_api.replicate(section.project_name)
 
                 # Create the repo for the local git mirror
-                create_local_mirror(
-                    LOCAL_GIT_DIR, project_git,
-                    GERRIT_OS_SYSTEM_USER, GERRIT_OS_SYSTEM_GROUP)
+                checkout.create_local_mirror(settings.local_git_dir)
 
-                if acl_config:
-                    acl_sha = acl_cache.get(acl_config)
-                    if project_cache[project].get('acl-sha') != acl_sha:
-                        process_acls(
-                            acl_config, project, ACL_DIR, section,
-                            remote_url, repo_path, ssh_env, gerrit,
-                            GERRIT_GITID)
-                        project_cache[project]['acl-sha'] = acl_sha
-                    else:
-                        log.info("%s has matching sha, skipping ACLs",
-                                 project)
+                # Process ACL Configuration
+                if section.acl_config:
+                    acl_name = u.fixup_path(section.acl_config)
+                    acl_sha = {k: v for k, v in acl_cache.items() if acl_name in k}
+                    for name, sha in acl_sha.items():
+                        if section.cache.get('acl-sha') != sha:
+                            process_acls(name, section, gerrit_api)
+                            section.cache['acl-sha'] = sha
+                        else:
+                            log.info("%s has matching sha, skipping ACLs",
+                                     section.project_name)
 
-                if 'has-github' in options or default_has_github:
-                    created = create_update_github_project(
-                        DEFAULT_HAS_ISSUES, DEFAULT_HAS_DOWNLOADS,
-                        DEFAULT_HAS_WIKI, GITHUB_SECURE_CONFIG,
-                        options, project, description, homepage,
-                        project_cache[project])
-                    if created and GERRIT_REPLICATE:
-                        gerrit.replicate(project)
+                # Process Groups
+                if section.groups:
+                    group_name = u.fixup_path(section.groups)
+                    group_sha = {k: v for k, v in group_cache.items() if group_name in k}
+                    for name, sha in group_sha.items():
+                        if section.cache.get('groups-sha') == sha:
+                            log.info('No changes to %s groups file', section.project_name)
+                            continue
+                        create_groups(group_config=name, gerrit_api=gerrit_api)
+                        section.cache['groups-sha'] = group_sha
 
-            except Exception:
-                log.exception(
-                    "Problems creating %s, moving on." % project)
-                continue
-            finally:
-                # Clean up after ourselves - this repo has no use
-                if os.path.exists(repo_path):
-                    shutil.rmtree(repo_path)
-    finally:
-        with open(PROJECT_CACHE_FILE, 'w') as cache_out:
-            log.info("Writing cache file %s", PROJECT_CACHE_FILE)
-            cache_out.write(json.dumps(
-                project_cache, sort_keys=True, indent=2))
-        os.unlink(ssh_env['GIT_SSH'])
+                # Process Prolog Rules
+                if section.prolog_rule:
+                    prolog_path = u.fixup_path(section.prolog_rule)
+                    prolog_sha = {k: v for k, v in prolog_cache.items() if prolog_path in k}
+                    for name, sha in prolog_sha.items():
+                        if section.cache.get('prolog-sha') == sha:
+                            log.info("No changes to %s prolog rules", section.project_name)
+                            continue
+                        process_prolog_rules(name, section, gerrit_api)
+                        section.cache['prolog-sha'] = sha
+
+                # Push to Github
+                if 'has-github' in section.options or settings.default_has_github:
+                    created = create_update_github_project(section, settings)
+                    if created and settings.gerrit_replicate:
+                        gerrit_api.replicate(section.project_name)
 
 if __name__ == "__main__":
     main()
