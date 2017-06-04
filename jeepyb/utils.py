@@ -82,7 +82,7 @@ def make_ssh_wrapper(gerrit_user, gerrit_key):
     (fd, name) = tempfile.mkstemp(text=True)
     os.write(fd, '#!/bin/bash\n')
     os.write(fd,
-             'ssh -i %s -l %s -o "StrictHostKeyChecking no" -v $@\n' %
+             'ssh -i %s -l %s -o "StrictHostKeyChecking no" $@\n' %
              (gerrit_key.replace('\\', '\\\\'), gerrit_user))
     os.close(fd)
     os.chmod(name, 0o755)
