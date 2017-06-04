@@ -190,11 +190,16 @@ class GerritMetaUpdater(object):
         self.remote_url = remote_url
         self.checkout_path = checkout_path
         self._gerrit_api = gerrit_api
+        self.current_head = 'master'
 
     def __repr__(self):
         return "%s(%s)" % (self.__class__.__name__, self.project)
 
     def __enter__(self):
+        st, out = git_command_output(self.checkout_path, ['rev-parse', '--abbrev-ref', 'HEAD'])
+        if st == 0 and out:
+            log.info('Current branch is %s' % self.current_head)
+            self.current_head = out
         self.fetch_meta_config()
         return self
 
@@ -207,7 +212,7 @@ class GerritMetaUpdater(object):
 
         # Reset git checkout before exiting
         git_command(self.checkout_path, ['reset', '--hard'])
-        git_command(self.checkout_path, ['checkout', 'master'])
+        git_command(self.checkout_path, ['checkout', self.current_head])
         git_command(self.checkout_path, ['branch', '-D', 'config'])
 
         return True
@@ -344,7 +349,7 @@ class GerritCheckout(object):
                 cmd = ['git', 'clone', self.remote_url, self.checkout_path]
                 run_command(cmd, env=self.ssh_env)
                 if self.upstream:
-                    git_command(self.checkout_path, ['remote', 'add', '-f upstream', self.upstream])
+                    git_command(self.checkout_path, ['remote', 'add', '-f', 'upstream', self.upstream])
                 self.change_user()
                 return None
             except Exception:
@@ -389,7 +394,8 @@ class GerritCheckout(object):
         # upstream prefix value
         branches = git_command_output(self.checkout_path, ['branch', '-a'])[1].split('\n')
         for branch in branches:
-            if not branch.strip().startswith("remotes/upstream"):
+            branch = branch.strip()
+            if not branch.startswith("remotes/upstream"):
                 continue
             if "->" in branch:
                 continue
@@ -399,7 +405,7 @@ class GerritCheckout(object):
 
             # Check out an up to date copy of the branch, so that
             # we can push it and it will get picked up below
-            git_command(self.checkout_path, ['checkout', '-B %s' % local_branch, branch])
+            git_command(self.checkout_path, ['checkout', '-B', '%s' % local_branch, branch])
 
         try:
             # Push all of the local branches to similarly named
@@ -478,8 +484,13 @@ class GerritCheckout(object):
             if has_upstream_remote:
                 git_command(self.checkout_path, ['remote', 'rm', 'upstream'])
 
-        # TODO(mordred): This is here so that later we can
-        # inspect the master branch for meta-info
-        # Checkout master and reset to the state of origin/master
-        git_command(self.checkout_path, ['checkout', '-B master', 'origin/master'])
+        # Get Remote HEAD branch name (default to origin/master if it fails
+        st, out = git_command_output(self.checkout_path, ['rev-parse', '--abbrev-ref', 'origin/HEAD'])
+        origin_head = out if st == 0 and out else 'origin/master'
+
+        # Local branch is just the remote branch name
+        local_branch = origin_head.replace('origin/', '')
+
+        # Checkout master and reset to the state of the origin branch
+        git_command(self.checkout_path, ['checkout', '-B', local_branch, origin_head])
 
