@@ -85,8 +85,7 @@ def main():
                 if not os.path.exists(section.repo_path):
                     checkout.make_local_copy()
                 else:
-                    checkout.update_loc
-                    al_copy(section.track_upstream)
+                    checkout.update_local_copy(section.track_upstream)
 
                 checkout.fsck_repo()
                 checkout.sync_upstream(section.upstream_prefix)

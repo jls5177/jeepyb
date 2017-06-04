@@ -52,6 +52,7 @@
 
 import ConfigParser
 import argparse
+import fnmatch
 import glob
 import hashlib
 import logging
@@ -340,11 +341,15 @@ def create_gerrit_project(section, gerrit_api):
 
 def generate_sha_for_dir(path, extension='.config'):
     sha_cache = {}
-    for config_file in glob.glob(os.path.join(path, '*/*%s' % extension)):
-        sha256 = hashlib.sha256()
-        with open(config_file, 'r') as f:
-            sha256.update(f.read())
-        sha_cache[config_file] = sha256.hexdigest()
+    for root, _, files in os.walk(path, topdown=True):
+        for f in files:
+            if not fnmatch.fnmatch(f, '*' + extension):
+                continue
+            config_file = os.path.join(root, f)
+            sha256 = hashlib.sha256()
+            with open(config_file, 'r') as f:
+                sha256.update(f.read())
+            sha_cache[config_file] = sha256.hexdigest()
 
     return sha_cache
 
@@ -363,6 +368,7 @@ def main():
     l.configure_logging(args)
 
     # Generate Jeepyb Settings
+    log.info('project_config_dir: %s' % args.project_config_dir)
     settings = JeepybSettings(args.project_config_dir)
 
     # Generate hashes of current configurations
