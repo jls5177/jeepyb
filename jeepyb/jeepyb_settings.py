@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 class JeepybSettings(object):
     def __init__(self, project_cfg_dir=None, update_cache=True, cleanup_tmp=True):
         # Set the project-config base directory if passed in as an argument
+        self.project_cfg_dir = project_cfg_dir
         u.set_project_config_dir(project_cfg_dir or '')
 
         self._registry = u.ProjectsRegistry()
@@ -55,15 +56,18 @@ class JeepybSettings(object):
 
     @property
     def acl_dir(self):
-        return self._registry.get_defaults('acl-dir')
+        acl_dir = self._registry.get_defaults('acl-dir', 'acls')
+        return os.path.join(self.project_cfg_dir, acl_dir)
 
     @property
     def group_dir(self):
-        return self._registry.get_defaults('group-dir')
+        group_dir = self._registry.get_defaults('group-dir', 'groups')
+        return os.path.join(self.project_cfg_dir, group_dir)
 
     @property
     def prolog_dir(self):
-        return self._registry.get_defaults('prolog-dir')
+        prolog_dir = self._registry.get_defaults('prolog-dir', 'prolog')
+        return os.path.join(self.project_cfg_dir, prolog_dir)
 
     @property
     def gerrit_host(self):
