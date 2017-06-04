@@ -362,10 +362,14 @@ def main():
     parser.add_argument('--project-config-dir', action='store',
                         default=None,
                         help='Location of the project-config repo')
-    parser.add_argument('--projects', metavar='project', nargs='*',
+    parser.add_argument('projects', metavar='project', nargs='*',
                         help='name of project(s) to process')
     args = parser.parse_args()
     l.configure_logging(args)
+    # If Debug logging is enabled lets enable the debug GIT and SSH logging
+    if log.level == logging.DEBUG:
+        u.DEBUG_SSH = True
+        u.DEBUG_GIT = True
 
     # Generate Jeepyb Settings
     log.info('project_config_dir: %s' % args.project_config_dir)

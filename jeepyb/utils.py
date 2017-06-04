@@ -29,6 +29,7 @@ log = logging.getLogger("jeepyb.utils")
 
 
 DEBUG_GIT = False
+DEBUG_SSH = False
 
 
 def short_project_name(full_project_name):
@@ -82,8 +83,8 @@ def make_ssh_wrapper(gerrit_user, gerrit_key):
     (fd, name) = tempfile.mkstemp(text=True)
     os.write(fd, '#!/bin/bash\n')
     os.write(fd,
-             'ssh -i %s -l %s -o "StrictHostKeyChecking no" -v $@\n' %
-             (gerrit_key.replace('\\', '\\\\'), gerrit_user))
+             'ssh -i %s -l %s -o "StrictHostKeyChecking no"%s $@\n' %
+             (gerrit_key.replace('\\', '\\\\'), gerrit_user, ' -v' if DEBUG_SSH else ''))
     os.close(fd)
     os.chmod(name, 0o755)
     return dict(GIT_SSH=name)
