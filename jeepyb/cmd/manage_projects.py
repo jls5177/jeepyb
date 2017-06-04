@@ -114,9 +114,9 @@ def create_groups_file(project, gerrit_api, repo_path):
     group_file = os.path.join(repo_path, "groups")
     uuids = {}
     for line in open(acl_config, 'r'):
-        r = re.match(r'^.*\sgroup\s+(.*)$', line)
-        if r and len(r.groups()) >= 1:
-            group = r.group(1).rstrip()  # remove any trailing spaces/newlines
+        match = re.match(r'^.*\sgroup\s+(.*)$', line)
+        if match and len(match.groups()) >= 1:
+            group = match.group(1).rstrip()  # remove any trailing spaces/newlines
             if group in uuids.keys():
                 continue
             uuid = gerrit_api.group_uuid(group)
