@@ -357,19 +357,19 @@ def generate_sha_for_dir(path, extension='.config'):
 def main():
     parser = argparse.ArgumentParser(description='Manage projects')
     l.setup_logging_arguments(parser)
-    parser.add_argument('--nocleanup', action='store_true',
+    parser.add_argument('--nocleanup', action='store_true', default=False,
                         help='do not remove temp directories')
     parser.add_argument('--project-config-dir', action='store',
                         default=None,
                         help='Location of the project-config repo')
-    parser.add_argument('projects', metavar='project', nargs='*',
+    parser.add_argument('--projects', metavar='project', nargs='*',
                         help='name of project(s) to process')
     args = parser.parse_args()
     l.configure_logging(args)
 
     # Generate Jeepyb Settings
     log.info('project_config_dir: %s' % args.project_config_dir)
-    settings = JeepybSettings(args.project_config_dir)
+    settings = JeepybSettings(args.project_config_dir, cleanup_tmp=False if args.nocleanup else True)
 
     # Generate hashes of current configurations
     acl_cache = generate_sha_for_dir(settings.acl_dir, extension='.config')

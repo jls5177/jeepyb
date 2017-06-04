@@ -32,7 +32,7 @@ log = logging.getLogger("track_upstream")
 def main():
     parser = argparse.ArgumentParser(description='Track Upstream Projects')
     l.setup_logging_arguments(parser)
-    parser.add_argument('--nocleanup', action='store_true',
+    parser.add_argument('--nocleanup', action='store_true', default=False,
                         help='do not remove temp directories')
     parser.add_argument('--project-config-dir', action='store',
                         default=None,
@@ -43,7 +43,8 @@ def main():
     l.configure_logging(args)
 
     # Generate Jeepyb Settings
-    settings = JeepybSettings(args.project_config_dir, update_cache=False)
+    settings = JeepybSettings(args.project_config_dir, update_cache=False,
+                              cleanup_tmp=False if args.nocleanup else True)
 
     gerrit_api = GerritAPI(host=settings.gerrit_host,
                            user=settings.gerrit_user,

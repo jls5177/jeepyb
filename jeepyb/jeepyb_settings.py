@@ -23,7 +23,7 @@ log = logging.getLogger(__name__)
 
 
 class JeepybSettings(object):
-    def __init__(self, project_cfg_dir=None, update_cache=True):
+    def __init__(self, project_cfg_dir=None, update_cache=True, cleanup_tmp=True):
         # Set the project-config base directory if passed in as an argument
         u.set_project_config_dir(project_cfg_dir or '')
 
@@ -36,6 +36,7 @@ class JeepybSettings(object):
         self.ssh_env = u.make_ssh_wrapper(self.gerrit_user, self.gerrit_key)
 
         self.update_cache = update_cache
+        self.cleanup_tmp = cleanup_tmp
 
     def __repr__(self):
         return "%s" % self.__class__.__name__
@@ -144,7 +145,7 @@ class JeepybSettings(object):
 
     @property
     def project_config(self):
-        return JeepybProjectConfigList(self._registry.configs_list, self)
+        return JeepybProjectConfigList(self._registry.configs_list, self, cleanup_tmp=self.cleanup_tmp)
 
     def __enter__(self):
         return self.project_config
@@ -166,9 +167,10 @@ class JeepybSettings(object):
 
 class JeepybProjectConfigList(object):
 
-    def __init__(self, configs_list, jeepyb_settings):
+    def __init__(self, configs_list, jeepyb_settings, cleanup_tmp=True):
         self.configs_list = configs_list
         self.jeepyb_settings = jeepyb_settings
+        self.cleanup_tmp = cleanup_tmp
 
     def __repr__(self):
         return "%s" % self.__class__.__name__
@@ -186,7 +188,7 @@ class JeepybProjectConfigList(object):
         """
         if index >= len(self.configs_list):
             raise IndexError
-        return JeepybProjectConfig(self.configs_list[index], self.jeepyb_settings)
+        return JeepybProjectConfig(self.configs_list[index], self.jeepyb_settings, cleanup_tmp=self.cleanup_tmp)
 
 
 class JeepybProjectConfig(object):
@@ -282,8 +284,7 @@ class JeepybProjectConfig(object):
 
     @property
     def repo_path(self):
-        return os.path.join(self.jeepyb_settings.jeepyb_cache_dir,
-                            self.project_name)
+        return os.path.abspath(os.path.join(self.jeepyb_settings.jeepyb_cache_dir, self.project_name))
 
     def __enter__(self):
         log.info("Processing project: %s" % self.project_name)
