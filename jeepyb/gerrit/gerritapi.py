@@ -18,7 +18,10 @@ import time
 import gerritlib.gerrit as GerritSshAPI
 from . import gerritrestapi as GerritRestAPI
 
-from jeepyb.utils import run_command, run_command_status, git_command, make_ssh_wrapper, git_command_output, is_windows
+from jeepyb.utils import run_command, \
+    run_command_status, git_command, \
+    make_ssh_wrapper, git_command_output, \
+    is_windows, remove_dir_if_exists
 
 
 log = logging.getLogger(__name__)
@@ -289,7 +292,6 @@ class GerritCheckout(object):
 
     def __init__(self, project, checkout_path, upstream, gerrit_api):
         """
-        
         :param project: 
         :param checkout_path: 
         :param gerrit_api: 
@@ -393,8 +395,7 @@ class GerritCheckout(object):
                 continue
             local_branch = branch.split()[0][len('remotes/upstream/'):]
             if upstream_prefix:
-                local_branch = "%s/%s" % (
-                    upstream_prefix, local_branch)
+                local_branch = "%s/%s" % (upstream_prefix, local_branch)
 
             # Check out an up to date copy of the branch, so that
             # we can push it and it will get picked up below
@@ -428,14 +429,19 @@ class GerritCheckout(object):
             raise Exception('git fsck failed not importing')
 
     def create_local_mirror(self, local_git_dir):
+        """
+        Creates a bare git repo if it does not already exist (that's it)
+        :param local_git_dir: 
+        """
         git_mirror_path = os.path.join(local_git_dir, self.project_git)
         if os.path.exists(git_mirror_path):
             return
 
         (ret, output) = run_command_status(['git', '--bare', 'init', git_mirror_path])
         if ret:
-            run_command(['rm', '-rf', 'git_mirror_path'])
+            remove_dir_if_exists(git_mirror_path)
             raise Exception(output)
+
         if not is_windows():
             cmd = ['chown', '-R',
                    '%s:%s' % (self._gerrit_api.system_user, self._gerrit_api.system_group), git_mirror_path]
@@ -447,6 +453,7 @@ class GerritCheckout(object):
         git_command(self.checkout_path, ['clean', '-fdx'])
 
         _, out = git_command_output(self.checkout_path, ['remote'])
+        # todo: evaluate if 'upstream' is the correct prefix
         has_upstream_remote = 'upstream' in out
 
         if track_upstream:

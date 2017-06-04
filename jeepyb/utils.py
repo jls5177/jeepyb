@@ -30,6 +30,7 @@ log = logging.getLogger("jeepyb.utils")
 
 DEBUG_GIT = False
 
+
 def short_project_name(full_project_name):
     """Return the project part of the git repository name."""
     return full_project_name.split('/')[-1]

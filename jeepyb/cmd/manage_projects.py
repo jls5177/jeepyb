@@ -101,7 +101,6 @@ def copy_file_to_git_repo(repo_path, copy_file, dest_filename):
 
 def create_groups_file(project, gerrit_api, repo_path):
     """
-    
     :param project: 
     :param gerrit_api: 
     :param repo_path: 
@@ -429,6 +428,7 @@ def main():
                         gerrit_api.replicate(section.project_name)
 
                 # Create the repo for the local git mirror
+                # todo: evaluate if this is even needed
                 checkout.create_local_mirror(settings.local_git_dir)
 
                 # Process ACL Configuration

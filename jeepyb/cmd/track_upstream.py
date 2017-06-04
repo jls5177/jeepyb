@@ -14,41 +14,8 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-# manage_projects.py reads a config file called projects.ini
-# It should look like:
-
-# [projects]
-# homepage=http://openstack.org
-# gerrit-host=review.openstack.org
-# local-git-dir=/var/lib/git
-# gerrit-key=/home/gerrit2/review_site/etc/ssh_host_rsa_key
-# gerrit-committer=Project Creator <openstack-infra@lists.openstack.org>
-# gerrit-replicate=True
-# has-github=True
-# has-wiki=False
-# has-issues=False
-# has-downloads=False
-# acl-dir=/home/gerrit2/acls
-# acl-base=/home/gerrit2/acls/project.config
-#
-# manage_projects.py reads a project listing file called projects.yaml
-# It should look like:
-# - project: PROJECT_NAME
-#   options:
-#    - has-wiki
-#    - has-issues
-#    - has-downloads
-#    - has-pull-requests
-#    - track-upstream
-#   homepage: Some homepage that isn't http://openstack.org
-#   description: This is a great project
-#   upstream: https://gerrit.googlesource.com/gerrit
-#   upstream-prefix: upstream
-#   acl-config: /path/to/gerrit/project.config
-#   acl-append:
-#     - /path/to/gerrit/project.config
-#   acl-parameters:
-#     project: OTHER_PROJECT_NAME
+# track_upstream.py reads a config file called projects.ini and syncs
+# a remote repo with the matching Gerrit repo
 
 import argparse
 import logging
@@ -63,7 +30,7 @@ log = logging.getLogger("track_upstream")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Manage projects')
+    parser = argparse.ArgumentParser(description='Track Upstream Projects')
     l.setup_logging_arguments(parser)
     parser.add_argument('--nocleanup', action='store_true',
                         help='do not remove temp directories')
@@ -118,7 +85,8 @@ def main():
                 if not os.path.exists(section.repo_path):
                     checkout.make_local_copy()
                 else:
-                    checkout.update_local_copy(section.track_upstream)
+                    checkout.update_loc
+                    al_copy(section.track_upstream)
 
                 checkout.fsck_repo()
                 checkout.sync_upstream(section.upstream_prefix)
