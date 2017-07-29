@@ -100,6 +100,10 @@ class JeepybSettings(object):
         return self._registry.get_defaults('gerrit-http-pass')
 
     @property
+    def gerrit_http_digest_auth(self):
+        return self._registry.get_defaults('gerrit-http-digest-auth')
+
+    @property
     def gerrit_key(self):
         return self._registry.get_defaults('gerrit-key')
 

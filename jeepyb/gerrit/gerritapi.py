@@ -49,7 +49,7 @@ class FetchConfigException(Exception):
 
 class GerritAPI(object):
 
-    def __init__(self, host, user, port, ssh_key, url, http_pass, gitid, system_user, system_group):
+    def __init__(self, host, user, port, ssh_key, url, http_pass, gitid, system_user, system_group, digest_auth):
         self.host = host
         self.user = user
         self.port = port
@@ -66,7 +66,8 @@ class GerritAPI(object):
                                                keyfile=ssh_key)
         self._gerrit_rest = GerritRestAPI.GerritRestApi(host=url,
                                                         username=user,
-                                                        password=http_pass)
+                                                        password=http_pass,
+                                                        digest_auth=digest_auth)
 
         self.ssh_env = make_ssh_wrapper(self.user, self.ssh_key)
 

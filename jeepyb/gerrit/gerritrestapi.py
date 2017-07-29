@@ -36,9 +36,12 @@ def convert_unicode_json_to_ascii(json_object):
 
 
 class GerritRestApi(object):
-    def __init__(self, host, username, password):
+    def __init__(self, host, username, password, digest_auth=True):
         self.host = host
-        self.auth = requests.auth.HTTPDigestAuth(username, password)
+        if digest_auth:
+            self.auth = requests.auth.HTTPDigestAuth(username, password)
+        else:
+            self.auth = requests.auth.HTTPBasicAuth(username, password)
 
     def read_json_response(self, url, host=None, reqtype='GET', body=None, expect_status=200, ignore_404=True, return_unicode=False, is_json=True):
         """
