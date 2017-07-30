@@ -52,6 +52,7 @@ def main():
                            ssh_key=settings.gerrit_key,
                            url=settings.gerrit_url,
                            http_pass=settings.gerrit_http_pass,
+                           digest_auth=settings.gerrit_http_digest_auth,
                            gitid=settings.gerrit_gitid,
                            system_user=settings.gerrit_os_system_user,
                            system_group=settings.gerrit_os_system_group)
