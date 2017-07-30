@@ -84,9 +84,12 @@ def main():
                                           gerrit_api=gerrit_api)
 
                 # Make Local repo
+                log.info('Project repo path: %s' % section.repo_path)
                 if not os.path.exists(section.repo_path):
+                    log.info('Project not in cache, creating a local copy')
                     checkout.make_local_copy()
                 else:
+                    log.info('Project in cache, updating local copy')
                     checkout.update_local_copy(section.track_upstream)
 
                 checkout.fsck_repo()

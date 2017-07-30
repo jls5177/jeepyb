@@ -292,7 +292,7 @@ class JeepybProjectConfig(object):
 
     @property
     def repo_path(self):
-        return os.path.abspath(os.path.join(self.jeepyb_settings.jeepyb_cache_dir, self.project_name))
+        return os.path.abspath(os.path.join(self.jeepyb_settings.jeepyb_cache_dir, self.project_name + '_repo'))
 
     def __enter__(self):
         log.info("Processing project: %s" % self.project_name)
