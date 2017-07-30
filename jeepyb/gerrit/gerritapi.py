@@ -390,7 +390,8 @@ class GerritCheckout(object):
 
         return "push %s HEAD:refs/heads/master"
 
-    def sync_upstream(self, upstream_prefix=None):
+    def sync_upstream(self, upstream_prefix=None, force_push=False):
+        force_push = ['--force'] if force_push else []
         git_command(self.checkout_path, ['remote', 'update', 'upstream', '--prune'], env=self.ssh_env)
         # Any branch that exists in the upstream remote, we want
         # a local branch of, optionally prefixed with the
@@ -413,9 +414,9 @@ class GerritCheckout(object):
         try:
             # Push all of the local branches to similarly named
             # Branches on gerrit. Also, push all of the tags
-            cmd = ['push', 'origin', 'refs/heads/*:refs/heads/*']
+            cmd = ['push', 'origin', 'refs/heads/*:refs/heads/*'] + force_push
             git_command(self.checkout_path, cmd, env=self.ssh_env)
-            git_command(self.checkout_path, ['push', 'origin', '--tags'], env=self.ssh_env)
+            git_command(self.checkout_path, ['push', 'origin', '--tags'] + force_push, env=self.ssh_env)
         except Exception:
             log.exception(
                 "Error pushing %s to Gerrit." % self.project)

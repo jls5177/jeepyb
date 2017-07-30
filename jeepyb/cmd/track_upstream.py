@@ -34,6 +34,8 @@ def main():
     l.setup_logging_arguments(parser)
     parser.add_argument('--nocleanup', action='store_true', default=False,
                         help='do not remove temp directories')
+    parser.add_argument('--force-push', action='store_true', default=False,
+                        help='Force push all changes to Gerrit repos. Should be used with caution!!!')
     parser.add_argument('--project-config-dir', action='store',
                         default=None,
                         help='Location of the project-config repo')
@@ -93,7 +95,7 @@ def main():
                     checkout.update_local_copy(section.track_upstream)
 
                 checkout.fsck_repo()
-                checkout.sync_upstream(section.upstream_prefix)
+                checkout.sync_upstream(section.upstream_prefix, force_push=args.force_push)
 
 
 if __name__ == "__main__":
