@@ -350,7 +350,9 @@ class GerritCheckout(object):
                 cmd = ['git', 'clone', self.remote_url, self.checkout_path]
                 run_command(cmd, env=self.ssh_env)
                 if self.upstream:
-                    git_command(self.checkout_path, ['remote', 'add', '-f', 'upstream', self.upstream])
+                    git_command(self.checkout_path, ['remote', 'add', 'upstream', self.upstream])
+                    # Fetch upstream heads and tags
+                    git_command(self.checkout_path, ['fetch', '--tags', 'upstream'], env=self.ssh_env)
                 self.change_user()
                 return None
             except Exception:
@@ -479,6 +481,9 @@ class GerritCheckout(object):
             # Now that we have any upstreams configured, fetch all of the refs
             # we might need, pruning remote branches that no longer exist
             git_command(self.checkout_path, ['remote', 'update', '--prune'], env=self.ssh_env)
+
+            # Fetch all tags now
+            git_command(self.checkout_path, ['fetch', 'upstream', 'refs/tags/*:refs/tags/*'], env=self.ssh_env)
         else:
             # If we are not tracking upstream, then we do not need
             # an upstream remote configured
